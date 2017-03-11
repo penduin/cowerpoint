@@ -4,13 +4,15 @@ var Slides = function() {
 
 	this.slides		= document.querySelectorAll("#slides > div");
 	this.showing	= NaN;
+	this.stripcount	= 0;
+	this.curslide	= null;
 
 
 	window.addEventListener('hashchange', function(e) {
 		var index = parseInt(window.location.hash.slice(1));
 
 		if (!isNaN(index)) {
-			this.show(index);
+			this.show(index, true);
 		}
 	}.bind(this), false);
 
@@ -52,7 +54,7 @@ var Slides = function() {
 
 			case 39: /* right	*/
 			case 40: /* down	*/
-				this.next(true);
+				this.next();
 				break;
 			case 83: /* s       */
 				this.buzz();
@@ -79,7 +81,7 @@ var Slides = function() {
 
 	index = parseInt(window.location.hash.slice(1));
 	if (isNaN(index)) {
-		index = 0;
+		index = 1;
 	}
 
 	/*
@@ -104,13 +106,13 @@ var Slides = function() {
 			this.buzz();
 		}.bind(this));
 		socket.on("next", function(data) {
-			this.next(false, data.page);
+			this.next(data.page);
 		}.bind(this));
 		socket.on("back", function(data) {
 			this.prev(data.page);
 		}.bind(this));
 		socket.on("forward", function(data) {
-			this.next(true, data.page);
+			this.next(data.page);
 		}.bind(this));
 		socket.on("show", function(data) {
 			this.show(data.page, true);
@@ -141,114 +143,161 @@ var Slides = function() {
 
 Slides.prototype = {
 
-show: function show(index, instant, backwards)
+selectSlide: function selectSlide(index, select)
 {
-	var oldslide	= null;
+	var count		= index;
+	var slideidx	= 0;
+	var slide;
+	var striptease;
+
+	/*
+		A slide may have multiple frames. Take that into account while finding
+		the appropriate slide based on the specified index.
+	*/
+	for (;;) {
+		slide = this.slides[slideidx++];
+
+		if (!slide) {
+			if (select) {
+				this.striptease = [];
+				this.stripcount = 0;
+			}
+			return(null);
+		}
+
+		/* Count the slide itself */
+		count -= 1;
+
+		var items = [];
+
+		striptease = slide.querySelectorAll('.skin');
+		if ((!striptease || !striptease.length) &&
+			(striptease = slide.querySelector('.striptease'))
+		) {
+			striptease = striptease.childNodes;
+		}
+
+		if (striptease) {
+			for (var i = 0, s; s = striptease[i]; i++) {
+				if (s && s.nodeName && "#text" !== s.nodeName) {
+					items.push(s);
+				}
+			}
+		}
+
+		count -= items.length;
+		if (count <= 0) {
+			if (select) {
+				this.stripcount = items.length + count;
+				this.striptease = items;
+			}
+
+			return(slide);
+		}
+	}
+},
+
+show: function show(index, instant, oldindex)
+{
+	var oldslide;
 	var newslide;
 	var striptease;
 
-	if (isNaN(index)) {
-		index = 0;
+	if (isNaN(oldindex)) {
+		oldindex = this.showing;
 	}
 
-	this.showing = parseInt(this.showing);
+	oldslide = this.selectSlide(oldindex, false);
+
 	index = parseInt(index);
-
-	if (index == this.showing || !(newslide = this.slides[index])) {
-		return;
+	if (isNaN(index)) {
+		index = 1;
 	}
 
-	this.striptease = [];
-
-	if (!isNaN(this.showing)) {
-		oldslide = this.slides[this.showing];
+	if (!(newslide = this.selectSlide(index, true))) {
+		return;
 	}
 
 	/*
 		Determine if this slide should be animated or instant. If either the new
 		or old slide is marked as "instant" then disable the animation.
 	*/
-	if ((newslide && newslide.classList.contains("instant")) ||
-		(oldslide && oldslide.classList.contains("instant")) ||
-		instant
-	) {
+	if (newslide !== oldslide) {
+		console.log("Slide:", oldindex, index);
+
 		newslide.classList.remove("slidein");
-		if (oldslide) oldslide.classList.remove("slidein");
-	} else {
-		newslide.classList.add("slidein");
-		if (oldslide) oldslide.classList.add("slidein");
-	}
-
-	if (oldslide) {
-		if (this.showing < index) {
-			oldslide.style.left		= '-200%';
+		if (oldindex < index) {
+			newslide.style.left = '200%';
 		} else {
-			oldslide.style.left		= '200%';
+			newslide.style.left = '-200%';
 		}
-		oldslide.style.overflowY	= 'hidden';
+
+		if ((newslide && newslide.classList.contains("instant")) ||
+			(oldslide && oldslide.classList.contains("instant")) ||
+			instant
+		) {
+			newslide.classList.remove("slidein");
+			if (oldslide) oldslide.classList.remove("slidein");
+		} else {
+			newslide.classList.add("slidein");
+			if (oldslide) oldslide.classList.add("slidein");
+		}
+
+		var seen = false;
+		for (var i = 0, s; s = this.slides[i]; i++) {
+			if (s === newslide) {
+				newslide.style.left		= '0px';
+				newslide.style.overflowY= 'auto';
+
+				seen					= true;
+			} else if (!seen) {
+				s.style.left			= '-200%';
+				s.style.overflowY		= 'hidden';
+			} else {
+				s.style.left			= '200%';
+				s.style.overflowY		= 'hidden';
+			}
+		}
+
+		if (newslide && oldslide) {
+			newslide.scrollTop = oldslide.scrollTop;
+		}
 	}
 
-	newslide.style.left			= '0px';
-	newslide.style.overflowY	= 'auto';
-
-	if (newslide && oldslide) {
-		newslide.scrollTop = oldslide.scrollTop;
-	}
-
-	striptease = newslide.querySelectorAll('.skin');
-	if ((!striptease || !striptease.length) &&
-		(striptease = newslide.querySelector('.striptease'))
-	) {
-		striptease = striptease.childNodes;
-	}
-
-	if (striptease && striptease.length) {
-		for (var i = 0, c; c = striptease[i]; i++) {
+	if (this.striptease && this.striptease.length) {
+		for (var i = 0, c; c = this.striptease[i]; i++) {
 			if (!c.classList) {
 				continue;
 			}
 
-			if (!backwards) {
-				c.classList.add('hidden');
-				this.striptease.push(c);
-			} else {
+			if (i < this.stripcount) {
 				c.classList.remove('hidden');
+			} else {
+				c.classList.add('hidden');
 			}
 		}
 	}
 
-	this.showing = index;
-	window.location.hash = '#' + this.showing;
+	this.curslide			= newslide;
+	this.showing			= index;
+	window.location.hash	= '#' + index;
 },
 
-next: function next(instant, page)
+next: function next(page)
 {
-	var		child;
-
-	if (this.striptease && (child = this.striptease.shift())) {
-		child.classList.remove('hidden');
-
-		if (instant) {
-			/* Show all */
-			while ((child = this.striptease.shift())) {
-				child.classList.remove('hidden');
-			}
-		}
+	if (!isNaN(page)) {
+		this.show(page, false, page - 1);
 	} else {
-		if (!isNaN(page)) {
-			this.show(page);
-		} else {
-			this.show(this.showing + 1);
-		}
+		this.show(this.showing + 1, false, this.showing);
 	}
 },
 
 prev: function prev(page)
 {
 	if (!isNaN(page)) {
-		this.show(page, undefined, true);
-	} else if (this.showing > 0) {
-		this.show(this.showing - 1, undefined, true);
+		this.show(page, false, page + 1);
+	} else if (this.showing > 1) {
+		this.show(this.showing - 1, false, this.showing);
 	}
 },
 
